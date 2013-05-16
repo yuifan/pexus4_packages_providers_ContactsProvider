@@ -18,6 +18,7 @@ package com.android.providers.contacts;
 
 import android.provider.ContactsContract.FullNameStyle;
 import android.test.AndroidTestCase;
+import android.test.suitebuilder.annotation.SmallTest;
 
 import java.text.Collator;
 import java.util.Arrays;
@@ -25,8 +26,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Locale;
 
-import com.android.providers.contacts.ContactLocaleUtils;
-
+@SmallTest
 public class ContactLocaleUtilsTest extends AndroidTestCase {
     private static final String LATIN_NAME = "John Smith";
     private static final String CHINESE_NAME = "\u675C\u9D51";
@@ -51,16 +51,7 @@ public class ContactLocaleUtilsTest extends AndroidTestCase {
     }
 
     public void testChineseContactLocaleUtils() throws Exception {
-        boolean hasChineseCollator = false;
-        final Locale locale[] = Collator.getAvailableLocales();
-        for (int i = 0; i < locale.length; i++) {
-            if (locale[i].equals(Locale.CHINA)) {
-                hasChineseCollator = true;
-                break;
-            }
-        }
-
-        if (!hasChineseCollator) {
+        if (!hasChineseCollator()) {
             return;
         }
 
@@ -86,28 +77,21 @@ public class ContactLocaleUtilsTest extends AndroidTestCase {
         verifyKeys(keys, CHINESE_LATIN_MIX_NAME_2_KEY);
     }
 
-    private void verifyKeys(final Iterator<String> resultKeys, final String[] expectedKeys)
-            throws Exception {
-        HashSet<String> allKeys = new HashSet<String>();
-        while (resultKeys.hasNext()) {
-            allKeys.add(resultKeys.next());
+    public void testChineseStyleNameWithDifferentLocale() throws Exception {
+        if (!hasChineseCollator()) {
+            return;
         }
-        assertEquals(allKeys, new HashSet<String>(Arrays.asList(expectedKeys)));
-    }
-
-    private void testChineseStyleNameWithDifferentLocale() throws Exception {
         mContactLocaleUtils.setLocale(Locale.ENGLISH);
-        assertTrue(mContactLocaleUtils.getSortKey(CHINESE_NAME,
-                FullNameStyle.CHINESE).equalsIgnoreCase("DU \u675C JUAN \u9D51"));
-        assertTrue(mContactLocaleUtils.getSortKey(CHINESE_NAME,
-                FullNameStyle.CJK).equalsIgnoreCase("DU \u675C JUAN \u9D51"));
+        assertEquals("DU \u675C JUAN \u9D51",
+                mContactLocaleUtils.getSortKey(CHINESE_NAME, FullNameStyle.CHINESE).toUpperCase());
+        assertEquals("DU \u675C JUAN \u9D51",
+                mContactLocaleUtils.getSortKey(CHINESE_NAME, FullNameStyle.CJK).toUpperCase());
         mContactLocaleUtils.setLocale(Locale.CHINESE);
-        assertTrue(mContactLocaleUtils.getSortKey(CHINESE_NAME,
-                FullNameStyle.CHINESE).equalsIgnoreCase("DU \u675C JUAN \u9D51"));
-        assertTrue(mContactLocaleUtils.getSortKey(CHINESE_NAME,
-                FullNameStyle.CJK).equalsIgnoreCase("DU \u675C JUAN \u9D51"));
-        assertTrue(mContactLocaleUtils.getSortKey(LATIN_NAME,
-                FullNameStyle.WESTERN).equalsIgnoreCase(LATIN_NAME));
+        assertEquals("DU \u675C JUAN \u9D51",
+                mContactLocaleUtils.getSortKey(CHINESE_NAME, FullNameStyle.CHINESE).toUpperCase());
+        assertEquals("DU \u675C JUAN \u9D51",
+                mContactLocaleUtils.getSortKey(CHINESE_NAME, FullNameStyle.CJK).toUpperCase());
+        assertEquals(LATIN_NAME, mContactLocaleUtils.getSortKey(LATIN_NAME, FullNameStyle.WESTERN));
 
         mContactLocaleUtils.setLocale(Locale.ENGLISH);
         Iterator<String> keys = mContactLocaleUtils.getNameLookupKeys(CHINESE_NAME,
@@ -121,5 +105,24 @@ public class ContactLocaleUtilsTest extends AndroidTestCase {
         keys = mContactLocaleUtils.getNameLookupKeys(LATIN_NAME, FullNameStyle.WESTERN);
         verifyKeys(keys, LATIN_NAME_KEY);
 
+    }
+
+    private void verifyKeys(final Iterator<String> resultKeys, final String[] expectedKeys)
+            throws Exception {
+        HashSet<String> allKeys = new HashSet<String>();
+        while (resultKeys.hasNext()) {
+            allKeys.add(resultKeys.next());
+        }
+        assertEquals(allKeys, new HashSet<String>(Arrays.asList(expectedKeys)));
+    }
+
+    private boolean hasChineseCollator() {
+        final Locale locale[] = Collator.getAvailableLocales();
+        for (int i = 0; i < locale.length; i++) {
+            if (locale[i].equals(Locale.CHINA)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

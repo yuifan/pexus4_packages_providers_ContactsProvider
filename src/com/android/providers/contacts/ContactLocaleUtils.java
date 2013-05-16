@@ -16,15 +16,15 @@
 
 package com.android.providers.contacts;
 
+import android.provider.ContactsContract.FullNameStyle;
+import android.util.SparseArray;
+
+import com.android.providers.contacts.HanziToPinyin.Token;
+
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Locale;
-
-import android.provider.ContactsContract.FullNameStyle;
-import com.android.internal.util.HanziToPinyin;
-import com.android.internal.util.HanziToPinyin.Token;
 
 /**
  * This utility class provides customized sort key and name lookup key according the locale.
@@ -40,6 +40,7 @@ public class ContactLocaleUtils {
         public String getSortKey(String displayName) {
             return displayName;
         }
+        @SuppressWarnings("unused")
         public Iterator<String> getNameLookupKeys(String name) {
             return null;
         }
@@ -128,10 +129,10 @@ public class ContactLocaleUtils {
     private static final String KOREAN_LANGUAGE = Locale.KOREAN.getLanguage().toLowerCase();
 
     private static ContactLocaleUtils sSingleton;
-    private HashMap<Integer, ContactLocaleUtilsBase> mUtils =
-            new HashMap<Integer, ContactLocaleUtilsBase>();
+    private final SparseArray<ContactLocaleUtilsBase> mUtils =
+            new SparseArray<ContactLocaleUtilsBase>();
 
-    private ContactLocaleUtilsBase mBase = new ContactLocaleUtilsBase();
+    private final ContactLocaleUtilsBase mBase = new ContactLocaleUtilsBase();
 
     private String mLanguage;
 
@@ -180,7 +181,7 @@ public class ContactLocaleUtils {
                 mUtils.put(nameStyle, utils);
             }
         }
-        return (utils == null) ? mBase: utils;
+        return (utils == null) ? mBase : utils;
     }
 
     /**

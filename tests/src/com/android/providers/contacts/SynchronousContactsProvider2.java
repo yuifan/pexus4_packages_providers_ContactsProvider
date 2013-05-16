@@ -19,6 +19,9 @@ package com.android.providers.contacts;
 import android.accounts.Account;
 import android.content.Context;
 import android.database.sqlite.SQLiteDatabase;
+import android.util.Log;
+
+import junit.framework.Assert;
 
 import java.util.Locale;
 
@@ -30,21 +33,24 @@ public class SynchronousContactsProvider2 extends ContactsProvider2 {
     public static final String READ_ONLY_ACCOUNT_TYPE = "ro";
 
     private static Boolean sDataWiped = false;
-    private static ContactsDatabaseHelper mDbHelper;
+    private static ContactsDatabaseHelper sDbHelper;
     private boolean mDataWipeEnabled = true;
     private Account mAccount;
     private boolean mNetworkNotified;
+    private boolean mIsPhone = true;
+    private boolean mIsVoiceCapable = true;
 
     @Override
     protected ContactsDatabaseHelper getDatabaseHelper(final Context context) {
-        if (mDbHelper == null) {
-            mDbHelper = new ContactsDatabaseHelper(context);
+        if (sDbHelper == null) {
+            sDbHelper = ContactsDatabaseHelper.getNewInstanceForTest(context);
         }
-        return mDbHelper;
+        return sDbHelper;
     }
 
-    public static void resetOpenHelper() {
-        mDbHelper = null;
+    @Override
+    public ProfileProvider newProfileProvider() {
+        return new SynchronousProfileProvider(this);
     }
 
     public void setDataWipeEnabled(boolean flag) {
@@ -52,8 +58,8 @@ public class SynchronousContactsProvider2 extends ContactsProvider2 {
     }
 
     @Override
-    protected void onBeginTransaction() {
-        super.onBeginTransaction();
+    public void onBegin() {
+        super.onBegin();
         mNetworkNotified = false;
     }
 
@@ -64,6 +70,24 @@ public class SynchronousContactsProvider2 extends ContactsProvider2 {
 
     public boolean isNetworkNotified() {
         return mNetworkNotified;
+    }
+
+    public void setIsPhone(boolean flag) {
+        mIsPhone = flag;
+    }
+
+    @Override
+    public boolean isPhone() {
+        return mIsPhone;
+    }
+
+    public void setIsVoiceCapable(boolean flag) {
+        mIsVoiceCapable = flag;
+    }
+
+    @Override
+    public boolean isVoiceCapable() {
+        return mIsVoiceCapable;
     }
 
     @Override
@@ -81,11 +105,38 @@ public class SynchronousContactsProvider2 extends ContactsProvider2 {
     }
 
     @Override
-    protected void verifyAccounts() {
+    protected boolean shouldThrowExceptionForInitializationError() {
+        return true;
+    }
+
+    /** We'll use a static size for unit tests */
+    @Override
+    public int getMaxThumbnailDim() {
+        return 96;
+    }
+
+    /** We'll use a static size for unit tests */
+    @Override
+    public int getMaxDisplayPhotoDim() {
+        return 256;
     }
 
     @Override
-    protected void verifyLocale() {
+    protected void scheduleBackgroundTask(int task) {
+        performBackgroundTask(task, null);
+    }
+
+    @Override
+    protected void scheduleBackgroundTask(int task, Object arg) {
+        performBackgroundTask(task, arg);
+    }
+
+    @Override
+    protected void updateLocaleInBackground() {
+    }
+
+    @Override
+    protected void updateDirectoriesInBackground(boolean rescan) {
     }
 
     @Override
@@ -94,6 +145,11 @@ public class SynchronousContactsProvider2 extends ContactsProvider2 {
             mAccount = new Account("androidtest@gmail.com", "com.google");
         }
         return mAccount;
+    }
+
+    @Override
+    protected boolean isContactsAccount(Account account) {
+        return true;
     }
 
     /**
@@ -124,12 +180,12 @@ public class SynchronousContactsProvider2 extends ContactsProvider2 {
     }
 
     @Override
-    protected boolean isWritableAccount(String accountType) {
+    public boolean isWritableAccountWithDataSet(String accountType) {
         return !READ_ONLY_ACCOUNT_TYPE.equals(accountType);
     }
 
     public void prepareForFullAggregation(int maxContact) {
-        SQLiteDatabase db = getDatabaseHelper().getWritableDatabase();
+        SQLiteDatabase db = getDatabaseHelper(getContext()).getWritableDatabase();
         db.execSQL("UPDATE raw_contacts SET aggregation_mode=0,aggregation_needed=1;");
         long rowId =
             db.compileStatement("SELECT _id FROM raw_contacts LIMIT 1 OFFSET " + maxContact)
@@ -138,28 +194,104 @@ public class SynchronousContactsProvider2 extends ContactsProvider2 {
     }
 
     public long getRawContactCount() {
-        SQLiteDatabase db = getDatabaseHelper().getReadableDatabase();
+        SQLiteDatabase db = getDatabaseHelper(getContext()).getReadableDatabase();
         return db.compileStatement("SELECT COUNT(*) FROM raw_contacts").simpleQueryForLong();
     }
 
     public long getContactCount() {
-        SQLiteDatabase db = getDatabaseHelper().getReadableDatabase();
+        SQLiteDatabase db = getDatabaseHelper(getContext()).getReadableDatabase();
         return db.compileStatement("SELECT COUNT(*) FROM contacts").simpleQueryForLong();
     }
 
     @Override
     public void wipeData() {
+        Log.i(TAG, "wipeData");
         super.wipeData();
-        SQLiteDatabase db = getDatabaseHelper().getWritableDatabase();
+        SQLiteDatabase db = getDatabaseHelper(getContext()).getWritableDatabase();
         db.execSQL("replace into SQLITE_SEQUENCE (name,seq) values('raw_contacts', 42)");
         db.execSQL("replace into SQLITE_SEQUENCE (name,seq) values('contacts', 2009)");
         db.execSQL("replace into SQLITE_SEQUENCE (name,seq) values('data', 777)");
+
+        getContactDirectoryManagerForTest().scanAllPackages();
+    }
+
+    // Flags to remember which transaction callback has been called for which mode.
+    private boolean mOnBeginTransactionInternalCalledInProfileMode;
+    private boolean mOnCommitTransactionInternalCalledInProfileMode;
+    private boolean mOnRollbackTransactionInternalCalledInProfileMode;
+
+    private boolean mOnBeginTransactionInternalCalledInContactMode;
+    private boolean mOnCommitTransactionInternalCalledInContactMode;
+    private boolean mOnRollbackTransactionInternalCalledInContactMode;
+
+    public void resetTrasactionCallbackCalledFlags() {
+        mOnBeginTransactionInternalCalledInProfileMode = false;
+        mOnCommitTransactionInternalCalledInProfileMode = false;
+        mOnRollbackTransactionInternalCalledInProfileMode = false;
+
+        mOnBeginTransactionInternalCalledInContactMode = false;
+        mOnCommitTransactionInternalCalledInContactMode = false;
+        mOnRollbackTransactionInternalCalledInContactMode = false;
     }
 
     @Override
-    protected boolean isLegacyContactImportNeeded() {
+    protected void onBeginTransactionInternal(boolean forProfile) {
+        super.onBeginTransactionInternal(forProfile);
+        if (forProfile) {
+            mOnBeginTransactionInternalCalledInProfileMode = true;
+        } else {
+            mOnBeginTransactionInternalCalledInContactMode = true;
+        }
+    }
 
-        // We have an explicit test for data conversion - no need to do it every time
-        return false;
+    @Override
+    protected void onCommitTransactionInternal(boolean forProfile) {
+        super.onCommitTransactionInternal(forProfile);
+        if (forProfile) {
+            mOnCommitTransactionInternalCalledInProfileMode = true;
+        } else {
+            mOnCommitTransactionInternalCalledInContactMode = true;
+        }
+    }
+
+    @Override
+    protected void onRollbackTransactionInternal(boolean forProfile) {
+        super.onRollbackTransactionInternal(forProfile);
+        if (forProfile) {
+            mOnRollbackTransactionInternalCalledInProfileMode = true;
+        } else {
+            mOnRollbackTransactionInternalCalledInContactMode = true;
+        }
+    }
+
+    public void assertCommitTransactionCalledForProfileMode() {
+        Assert.assertTrue("begin", mOnBeginTransactionInternalCalledInProfileMode);
+        Assert.assertTrue("commit", mOnCommitTransactionInternalCalledInProfileMode);
+        Assert.assertFalse("rollback", mOnRollbackTransactionInternalCalledInProfileMode);
+    }
+
+    public void assertRollbackTransactionCalledForProfileMode() {
+        Assert.assertTrue("begin", mOnBeginTransactionInternalCalledInProfileMode);
+        Assert.assertFalse("commit", mOnCommitTransactionInternalCalledInProfileMode);
+        Assert.assertTrue("rollback", mOnRollbackTransactionInternalCalledInProfileMode);
+    }
+
+    public void assertNoTransactionsForProfileMode() {
+        Assert.assertFalse("begin", mOnBeginTransactionInternalCalledInProfileMode);
+        Assert.assertFalse("commit", mOnCommitTransactionInternalCalledInProfileMode);
+        Assert.assertFalse("rollback", mOnRollbackTransactionInternalCalledInProfileMode);
+    }
+
+
+    public void assertCommitTransactionCalledForContactMode() {
+        Assert.assertTrue("begin", mOnBeginTransactionInternalCalledInContactMode);
+        Assert.assertTrue("commit", mOnCommitTransactionInternalCalledInContactMode);
+        Assert.assertFalse("rollback", mOnRollbackTransactionInternalCalledInContactMode);
+    }
+
+    public void assertRollbackTransactionCalledForContactMode() {
+        Assert.assertTrue("begin", mOnBeginTransactionInternalCalledInContactMode);
+        Assert.assertFalse("commit", mOnCommitTransactionInternalCalledInContactMode);
+        Assert.assertTrue("rollback", mOnRollbackTransactionInternalCalledInContactMode);
     }
 }

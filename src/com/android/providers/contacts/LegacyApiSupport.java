@@ -15,17 +15,6 @@
  */
 package com.android.providers.contacts;
 
-import com.android.providers.contacts.ContactsDatabaseHelper.DataColumns;
-import com.android.providers.contacts.ContactsDatabaseHelper.ExtensionsColumns;
-import com.android.providers.contacts.ContactsDatabaseHelper.GroupsColumns;
-import com.android.providers.contacts.ContactsDatabaseHelper.MimetypesColumns;
-import com.android.providers.contacts.ContactsDatabaseHelper.PhoneColumns;
-import com.android.providers.contacts.ContactsDatabaseHelper.PhoneLookupColumns;
-import com.android.providers.contacts.ContactsDatabaseHelper.PresenceColumns;
-import com.android.providers.contacts.ContactsDatabaseHelper.RawContactsColumns;
-import com.android.providers.contacts.ContactsDatabaseHelper.StatusUpdatesColumns;
-import com.android.providers.contacts.ContactsDatabaseHelper.Tables;
-
 import android.accounts.Account;
 import android.app.SearchManager;
 import android.content.ContentUris;
@@ -41,16 +30,10 @@ import android.database.sqlite.SQLiteQueryBuilder;
 import android.database.sqlite.SQLiteStatement;
 import android.net.Uri;
 import android.provider.BaseColumns;
-import android.provider.ContactsContract;
 import android.provider.Contacts.ContactMethods;
 import android.provider.Contacts.Extensions;
 import android.provider.Contacts.People;
-import android.provider.ContactsContract.Contacts;
-import android.provider.ContactsContract.Data;
-import android.provider.ContactsContract.Groups;
-import android.provider.ContactsContract.RawContacts;
-import android.provider.ContactsContract.Settings;
-import android.provider.ContactsContract.StatusUpdates;
+import android.provider.ContactsContract;
 import android.provider.ContactsContract.CommonDataKinds.Email;
 import android.provider.ContactsContract.CommonDataKinds.GroupMembership;
 import android.provider.ContactsContract.CommonDataKinds.Im;
@@ -60,7 +43,27 @@ import android.provider.ContactsContract.CommonDataKinds.Phone;
 import android.provider.ContactsContract.CommonDataKinds.Photo;
 import android.provider.ContactsContract.CommonDataKinds.StructuredName;
 import android.provider.ContactsContract.CommonDataKinds.StructuredPostal;
+import android.provider.ContactsContract.Contacts;
+import android.provider.ContactsContract.Data;
+import android.provider.ContactsContract.Groups;
+import android.provider.ContactsContract.RawContacts;
+import android.provider.ContactsContract.Settings;
+import android.provider.ContactsContract.StatusUpdates;
+import android.text.TextUtils;
 import android.util.Log;
+
+import com.android.providers.contacts.ContactsDatabaseHelper.AccountsColumns;
+import com.android.providers.contacts.ContactsDatabaseHelper.DataColumns;
+import com.android.providers.contacts.ContactsDatabaseHelper.ExtensionsColumns;
+import com.android.providers.contacts.ContactsDatabaseHelper.GroupsColumns;
+import com.android.providers.contacts.ContactsDatabaseHelper.MimetypesColumns;
+import com.android.providers.contacts.ContactsDatabaseHelper.NameLookupColumns;
+import com.android.providers.contacts.ContactsDatabaseHelper.NameLookupType;
+import com.android.providers.contacts.ContactsDatabaseHelper.PhoneLookupColumns;
+import com.android.providers.contacts.ContactsDatabaseHelper.PresenceColumns;
+import com.android.providers.contacts.ContactsDatabaseHelper.RawContactsColumns;
+import com.android.providers.contacts.ContactsDatabaseHelper.StatusUpdatesColumns;
+import com.android.providers.contacts.ContactsDatabaseHelper.Tables;
 
 import java.util.HashMap;
 import java.util.Locale;
@@ -116,7 +119,9 @@ public class LegacyApiSupport {
     private static final int SETTINGS = 44;
 
     private static final String PEOPLE_JOINS =
-            " LEFT OUTER JOIN data name ON (raw_contacts._id = name.raw_contact_id"
+            " JOIN " + Tables.ACCOUNTS + " ON ("
+                + RawContactsColumns.CONCRETE_ACCOUNT_ID + "=" + AccountsColumns.CONCRETE_ID + ")"
+            + " LEFT OUTER JOIN data name ON (raw_contacts._id = name.raw_contact_id"
             + " AND (SELECT mimetype FROM mimetypes WHERE mimetypes._id = name.mimetype_id)"
                     + "='" + StructuredName.CONTENT_ITEM_TYPE + "')"
             + " LEFT OUTER JOIN data organization ON (raw_contacts._id = organization.raw_contact_id"
@@ -506,9 +511,9 @@ public class LegacyApiSupport {
     private boolean mDefaultAccountKnown;
     private Account mAccount;
 
-    private long mMimetypeEmail;
-    private long mMimetypeIm;
-    private long mMimetypePostal;
+    private final long mMimetypeEmail;
+    private final long mMimetypeIm;
+    private final long mMimetypePostal;
 
 
     public LegacyApiSupport(Context context, ContactsDatabaseHelper contactsDatabaseHelper,
@@ -561,8 +566,8 @@ public class LegacyApiSupport {
                         + " AS " + People.PHONETIC_NAME + " , " +
                 "note." + Note.NOTE
                         + " AS " + People.NOTES + ", " +
-                RawContacts.ACCOUNT_NAME + ", " +
-                RawContacts.ACCOUNT_TYPE + ", " +
+                AccountsColumns.CONCRETE_ACCOUNT_NAME + ", " +
+                AccountsColumns.CONCRETE_ACCOUNT_TYPE + ", " +
                 Tables.RAW_CONTACTS + "." + RawContacts.TIMES_CONTACTED
                         + " AS " + People.TIMES_CONTACTED + ", " +
                 Tables.RAW_CONTACTS + "." + RawContacts.LAST_TIME_CONTACTED
@@ -585,7 +590,7 @@ public class LegacyApiSupport {
                         + " AS " + People.TYPE + ", " +
                 "phone." + Phone.LABEL
                         + " AS " + People.LABEL + ", " +
-                "phone." + PhoneColumns.NORMALIZED_NUMBER
+                "_PHONE_NUMBER_STRIPPED_REVERSED(phone." + Phone.NUMBER + ")"
                         + " AS " + People.NUMBER_KEY;
 
         db.execSQL("DROP VIEW IF EXISTS " + LegacyTables.PEOPLE + ";");
@@ -594,8 +599,7 @@ public class LegacyApiSupport {
                         + " AS " + android.provider.Contacts.People._ID + ", " +
                 peopleColumns +
                 " FROM " + Tables.RAW_CONTACTS + PEOPLE_JOINS +
-                " WHERE " + Tables.RAW_CONTACTS + "." + RawContacts.DELETED + "=0" +
-                " AND " + RawContacts.IS_RESTRICTED + "=0" + ";");
+                " WHERE " + Tables.RAW_CONTACTS + "." + RawContacts.DELETED + "=0;");
 
         db.execSQL("DROP VIEW IF EXISTS " + LegacyTables.ORGANIZATIONS + ";");
         db.execSQL("CREATE VIEW " + LegacyTables.ORGANIZATIONS + " AS SELECT " +
@@ -605,8 +609,8 @@ public class LegacyApiSupport {
                         + " AS " + android.provider.Contacts.Organizations.PERSON_ID + ", " +
                 Data.IS_PRIMARY
                         + " AS " + android.provider.Contacts.Organizations.ISPRIMARY + ", " +
-                RawContacts.ACCOUNT_NAME + ", " +
-                RawContacts.ACCOUNT_TYPE + ", " +
+                AccountsColumns.CONCRETE_ACCOUNT_NAME + ", " +
+                AccountsColumns.CONCRETE_ACCOUNT_TYPE + ", " +
                 Organization.COMPANY
                         + " AS " + android.provider.Contacts.Organizations.COMPANY + ", " +
                 Organization.TYPE
@@ -618,8 +622,7 @@ public class LegacyApiSupport {
                 " FROM " + Tables.DATA_JOIN_MIMETYPE_RAW_CONTACTS +
                 " WHERE " + MimetypesColumns.CONCRETE_MIMETYPE + "='"
                         + Organization.CONTENT_ITEM_TYPE + "'"
-                        + " AND " + Tables.RAW_CONTACTS + "." + RawContacts.DELETED + "=0"
-                        + " AND " + RawContacts.IS_RESTRICTED + "=0" +
+                        + " AND " + Tables.RAW_CONTACTS + "." + RawContacts.DELETED + "=0" +
         ";");
 
         db.execSQL("DROP VIEW IF EXISTS " + LegacyTables.CONTACT_METHODS + ";");
@@ -643,13 +646,12 @@ public class LegacyApiSupport {
                 peopleColumns +
                 " FROM " + Tables.DATA + DATA_JOINS +
                 " WHERE " + ContactMethods.KIND + " IS NOT NULL"
-                    + " AND " + Tables.RAW_CONTACTS + "." + RawContacts.DELETED + "=0"
-                    + " AND " + RawContacts.IS_RESTRICTED + "=0" +
+                    + " AND " + Tables.RAW_CONTACTS + "." + RawContacts.DELETED + "=0" +
         ";");
 
 
         db.execSQL("DROP VIEW IF EXISTS " + LegacyTables.PHONES + ";");
-        db.execSQL("CREATE VIEW " + LegacyTables.PHONES + " AS SELECT " +
+        db.execSQL("CREATE VIEW " + LegacyTables.PHONES + " AS SELECT DISTINCT " +
                 DataColumns.CONCRETE_ID
                         + " AS " + android.provider.Contacts.Phones._ID + ", " +
                 DataColumns.CONCRETE_RAW_CONTACT_ID
@@ -662,7 +664,7 @@ public class LegacyApiSupport {
                         + " AS " + android.provider.Contacts.Phones.TYPE + ", " +
                 Tables.DATA + "." + Phone.LABEL
                         + " AS " + android.provider.Contacts.Phones.LABEL + ", " +
-                Tables.PHONE_LOOKUP + "." + PhoneLookupColumns.NORMALIZED_NUMBER
+                "_PHONE_NUMBER_STRIPPED_REVERSED(" + Tables.DATA + "." + Phone.NUMBER + ")"
                         + " AS " + android.provider.Contacts.Phones.NUMBER_KEY + ", " +
                 peopleColumns +
                 " FROM " + Tables.DATA
@@ -672,8 +674,7 @@ public class LegacyApiSupport {
                         + DATA_JOINS +
                 " WHERE " + MimetypesColumns.CONCRETE_MIMETYPE + "='"
                         + Phone.CONTENT_ITEM_TYPE + "'"
-                        + " AND " + Tables.RAW_CONTACTS + "." + RawContacts.DELETED + "=0"
-                        + " AND " + RawContacts.IS_RESTRICTED + "=0" +
+                        + " AND " + Tables.RAW_CONTACTS + "." + RawContacts.DELETED + "=0" +
         ";");
 
         db.execSQL("DROP VIEW IF EXISTS " + LegacyTables.EXTENSIONS + ";");
@@ -682,8 +683,8 @@ public class LegacyApiSupport {
                         + " AS " + android.provider.Contacts.Extensions._ID + ", " +
                 DataColumns.CONCRETE_RAW_CONTACT_ID
                         + " AS " + android.provider.Contacts.Extensions.PERSON_ID + ", " +
-                RawContacts.ACCOUNT_NAME + ", " +
-                RawContacts.ACCOUNT_TYPE + ", " +
+                AccountsColumns.CONCRETE_ACCOUNT_NAME + ", " +
+                AccountsColumns.CONCRETE_ACCOUNT_TYPE + ", " +
                 ExtensionsColumns.NAME
                         + " AS " + android.provider.Contacts.Extensions.NAME + ", " +
                 ExtensionsColumns.VALUE
@@ -691,19 +692,20 @@ public class LegacyApiSupport {
                 " FROM " + Tables.DATA_JOIN_MIMETYPE_RAW_CONTACTS +
                 " WHERE " + MimetypesColumns.CONCRETE_MIMETYPE + "='"
                         + android.provider.Contacts.Extensions.CONTENT_ITEM_TYPE + "'"
-                        + " AND " + Tables.RAW_CONTACTS + "." + RawContacts.DELETED + "=0"
-                        + " AND " + RawContacts.IS_RESTRICTED + "=0" +
+                        + " AND " + Tables.RAW_CONTACTS + "." + RawContacts.DELETED + "=0" +
         ";");
 
         db.execSQL("DROP VIEW IF EXISTS " + LegacyTables.GROUPS + ";");
         db.execSQL("CREATE VIEW " + LegacyTables.GROUPS + " AS SELECT " +
                 GroupsColumns.CONCRETE_ID + " AS " + android.provider.Contacts.Groups._ID + ", " +
-                Groups.ACCOUNT_NAME + ", " +
-                Groups.ACCOUNT_TYPE + ", " +
+                AccountsColumns.CONCRETE_ACCOUNT_NAME + ", " +
+                AccountsColumns.CONCRETE_ACCOUNT_TYPE + ", " +
                 Groups.TITLE + " AS " + android.provider.Contacts.Groups.NAME + ", " +
                 Groups.NOTES + " AS " + android.provider.Contacts.Groups.NOTES + " , " +
                 Groups.SYSTEM_ID + " AS " + android.provider.Contacts.Groups.SYSTEM_ID +
                 " FROM " + Tables.GROUPS +
+                " JOIN " + Tables.ACCOUNTS + " ON (" +
+                GroupsColumns.CONCRETE_ACCOUNT_ID + "=" + AccountsColumns.CONCRETE_ID + ")" +
         ";");
 
         db.execSQL("DROP VIEW IF EXISTS " + LegacyTables.GROUP_MEMBERSHIP + ";");
@@ -712,10 +714,8 @@ public class LegacyApiSupport {
                         + " AS " + android.provider.Contacts.GroupMembership._ID + ", " +
                 DataColumns.CONCRETE_RAW_CONTACT_ID
                         + " AS " + android.provider.Contacts.GroupMembership.PERSON_ID + ", " +
-                Tables.RAW_CONTACTS + "." + RawContacts.ACCOUNT_NAME
-                        + " AS " +  RawContacts.ACCOUNT_NAME + ", " +
-                Tables.RAW_CONTACTS + "." + RawContacts.ACCOUNT_TYPE
-                        + " AS " +  RawContacts.ACCOUNT_TYPE + ", " +
+                AccountsColumns.CONCRETE_ACCOUNT_NAME + ", " +
+                AccountsColumns.CONCRETE_ACCOUNT_TYPE + ", " +
                 GroupMembership.GROUP_ROW_ID
                         + " AS " + android.provider.Contacts.GroupMembership.GROUP_ID + ", " +
                 Groups.TITLE
@@ -727,10 +727,10 @@ public class LegacyApiSupport {
                 GroupsColumns.CONCRETE_SOURCE_ID
                         + " AS "
                         + android.provider.Contacts.GroupMembership.GROUP_SYNC_ID + ", " +
-                GroupsColumns.CONCRETE_ACCOUNT_NAME
+                AccountsColumns.CONCRETE_ACCOUNT_NAME
                         + " AS "
                         + android.provider.Contacts.GroupMembership.GROUP_SYNC_ACCOUNT + ", " +
-                GroupsColumns.CONCRETE_ACCOUNT_TYPE
+                AccountsColumns.CONCRETE_ACCOUNT_TYPE
                         + " AS "
                         + android.provider.Contacts.GroupMembership.GROUP_SYNC_ACCOUNT_TYPE +
                 " FROM " + Tables.DATA_JOIN_PACKAGES_MIMETYPES_RAW_CONTACTS_GROUPS +
@@ -745,8 +745,8 @@ public class LegacyApiSupport {
                         + " AS " + android.provider.Contacts.Photos._ID + ", " +
                 DataColumns.CONCRETE_RAW_CONTACT_ID
                         + " AS " + android.provider.Contacts.Photos.PERSON_ID + ", " +
-                RawContacts.ACCOUNT_NAME + ", " +
-                RawContacts.ACCOUNT_TYPE + ", " +
+                AccountsColumns.CONCRETE_ACCOUNT_NAME + ", " +
+                AccountsColumns.CONCRETE_ACCOUNT_TYPE + ", " +
                 Tables.DATA + "." + Photo.PHOTO
                         + " AS " + android.provider.Contacts.Photos.DATA + ", " +
                 "legacy_photo." + LegacyPhotoData.EXISTS_ON_SERVER
@@ -760,8 +760,7 @@ public class LegacyApiSupport {
                 " FROM " + Tables.DATA + DATA_JOINS + LEGACY_PHOTO_JOIN +
                 " WHERE " + MimetypesColumns.CONCRETE_MIMETYPE + "='"
                         + Photo.CONTENT_ITEM_TYPE + "'"
-                        + " AND " + Tables.RAW_CONTACTS + "." + RawContacts.DELETED + "=0"
-                        + " AND " + RawContacts.IS_RESTRICTED + "=0" +
+                        + " AND " + Tables.RAW_CONTACTS + "." + RawContacts.DELETED + "=0" +
         ";");
 
     }
@@ -1050,7 +1049,7 @@ public class LegacyApiSupport {
     private int updatePeople(long rawContactId, ContentValues values) {
         parsePeopleValues(values);
 
-        int count = mContactsProvider.update(RawContacts.CONTENT_URI,
+        int count = mContactsProvider.updateInTransaction(RawContacts.CONTENT_URI,
                 mValues, RawContacts._ID + "=" + rawContactId, null);
 
         if (count == 0) {
@@ -1060,7 +1059,7 @@ public class LegacyApiSupport {
         if (mValues2.size() != 0) {
             Uri dataUri = findFirstDataRow(rawContactId, StructuredName.CONTENT_ITEM_TYPE);
             if (dataUri != null) {
-                mContactsProvider.update(dataUri, mValues2, null, null);
+                mContactsProvider.updateInTransaction(dataUri, mValues2, null, null);
             } else {
                 mValues2.put(Data.RAW_CONTACT_ID, rawContactId);
                 mContactsProvider.insertInTransaction(Data.CONTENT_URI, mValues2);
@@ -1070,7 +1069,7 @@ public class LegacyApiSupport {
         if (mValues3.size() != 0) {
             Uri dataUri = findFirstDataRow(rawContactId, Note.CONTENT_ITEM_TYPE);
             if (dataUri != null) {
-                mContactsProvider.update(dataUri, mValues3, null, null);
+                mContactsProvider.updateInTransaction(dataUri, mValues3, null, null);
             } else {
                 mValues3.put(Data.RAW_CONTACT_ID, rawContactId);
                 mContactsProvider.insertInTransaction(Data.CONTENT_URI, mValues3);
@@ -1268,13 +1267,16 @@ public class LegacyApiSupport {
             String selection;
             String[] selectionArgs;
             if (accountName != null && accountType != null) {
+
                 selectionArgs = new String[]{accountName, accountType};
                 selection = Settings.ACCOUNT_NAME + "=?"
-                        + " AND " + Settings.ACCOUNT_TYPE + "=?";
+                        + " AND " + Settings.ACCOUNT_TYPE + "=?"
+                        + " AND " + Settings.DATA_SET + " IS NULL";
             } else {
                 selectionArgs = null;
                 selection = Settings.ACCOUNT_NAME + " IS NULL"
-                        + " AND " + Settings.ACCOUNT_TYPE + " IS NULL";
+                        + " AND " + Settings.ACCOUNT_TYPE + " IS NULL"
+                        + " AND " + Settings.DATA_SET + " IS NULL";
             }
             int count = mContactsProvider.updateInTransaction(Settings.CONTENT_URI, mValues,
                     selection, selectionArgs);
@@ -1314,6 +1316,7 @@ public class LegacyApiSupport {
                               + android.provider.Contacts.Settings._SYNC_ACCOUNT +
                       " AND " + ContactsContract.Settings.ACCOUNT_TYPE + "="
                               + android.provider.Contacts.Settings._SYNC_ACCOUNT_TYPE +
+                      " AND " + ContactsContract.Settings.DATA_SET + " IS NULL" +
                       " AND " + android.provider.Contacts.Settings.KEY + "='"
                               + android.provider.Contacts.Settings.SYNC_EVERYTHING + "'" +
             ")" +
@@ -1633,7 +1636,7 @@ public class LegacyApiSupport {
                 applyRawContactsAccount(qb);
                 String filterParam = uri.getPathSegments().get(2);
                 qb.appendWhere(" AND " + People._ID + " IN "
-                        + mContactsProvider.getRawContactsByFilterAsNestedQuery(filterParam));
+                        + getRawContactsByFilterAsNestedQuery(filterParam));
                 break;
             }
 
@@ -1749,6 +1752,7 @@ public class LegacyApiSupport {
                     String filterParam = uri.getLastPathSegment();
                     qb.appendWhere(" AND person =");
                     qb.appendWhere(mDbHelper.buildPhoneLookupAsNestedQuery(filterParam));
+                    qb.setDistinct(true);
                 }
                 break;
 
@@ -1872,13 +1876,14 @@ public class LegacyApiSupport {
                 break;
 
             case SEARCH_SUGGESTIONS:
-
-                // No legacy compatibility for search suggestions
-                return mGlobalSearchSupport.handleSearchSuggestionsQuery(db, uri, limit);
+                return mGlobalSearchSupport.handleSearchSuggestionsQuery(
+                        db, uri, projection, limit);
 
             case SEARCH_SHORTCUT: {
                 String lookupKey = uri.getLastPathSegment();
-                return mGlobalSearchSupport.handleSearchShortcutRefresh(db, lookupKey, projection);
+                String filter = ContactsProvider2.getQueryParameter(uri, "filter");
+                return mGlobalSearchSupport.handleSearchShortcutRefresh(
+                        db, projection, lookupKey, filter);
             }
 
             case LIVE_FOLDERS_PEOPLE:
@@ -1995,6 +2000,32 @@ public class LegacyApiSupport {
                                 + " FROM " + Tables.GROUPS
                                 + " WHERE " + Groups.SYSTEM_ID + "="
                                         + DatabaseUtils.sqlEscapeString(systemId) + "))";
+    }
+
+    private String getRawContactsByFilterAsNestedQuery(String filterParam) {
+        StringBuilder sb = new StringBuilder();
+        String normalizedName = NameNormalizer.normalize(filterParam);
+        if (TextUtils.isEmpty(normalizedName)) {
+            // Effectively an empty IN clause - SQL syntax does not allow an actual empty list here
+            sb.append("(0)");
+        } else {
+            sb.append("(" +
+                    "SELECT " + NameLookupColumns.RAW_CONTACT_ID +
+                    " FROM " + Tables.NAME_LOOKUP +
+                    " WHERE " + NameLookupColumns.NORMALIZED_NAME +
+                    " GLOB '");
+            // Should not use a "?" argument placeholder here, because
+            // that would prevent the SQL optimizer from using the index on NORMALIZED_NAME.
+            sb.append(normalizedName);
+            sb.append("*' AND " + NameLookupColumns.NAME_TYPE + " IN ("
+                    + NameLookupType.NAME_COLLATION_KEY + ","
+                    + NameLookupType.NICKNAME);
+            if (true) {
+                sb.append("," + NameLookupType.EMAIL_BASED_NICKNAME);
+            }
+            sb.append("))");
+        }
+        return sb.toString();
     }
 
     /**

@@ -16,8 +16,6 @@
 
 package com.android.providers.contacts;
 
-import com.google.android.collect.Lists;
-
 import android.accounts.Account;
 import android.content.ContentProviderOperation;
 import android.content.ContentUris;
@@ -28,12 +26,13 @@ import android.net.Uri;
 import android.os.RemoteException;
 import android.provider.ContactsContract;
 import android.provider.ContactsContract.AggregationExceptions;
+import android.provider.ContactsContract.CommonDataKinds.GroupMembership;
 import android.provider.ContactsContract.Contacts;
 import android.provider.ContactsContract.Groups;
 import android.provider.ContactsContract.Settings;
-import android.provider.ContactsContract.CommonDataKinds.GroupMembership;
-import android.test.suitebuilder.annotation.LargeTest;
 import android.test.suitebuilder.annotation.MediumTest;
+
+import com.google.android.collect.Lists;
 
 import java.util.ArrayList;
 
@@ -46,6 +45,7 @@ import java.util.ArrayList;
  *         com.android.providers.contacts.tests/android.test.InstrumentationTestRunner
  * </code>
  */
+@MediumTest
 public class GroupsTest extends BaseContactsProvider2Test {
 
     private static final String GROUP_GREY = "Grey";
@@ -64,7 +64,6 @@ public class GroupsTest extends BaseContactsProvider2Test {
     private static final String PHONE_CHARLIE_1 = "555-4444";
     private static final String PHONE_CHARLIE_2 = "555-5555";
 
-    @LargeTest
     public void testGroupSummary() {
 
         // Clear any existing data before starting
@@ -78,13 +77,13 @@ public class GroupsTest extends BaseContactsProvider2Test {
         long groupBlue = mActor.createGroup(GROUP_BLUE);
 
         // Create a handful of contacts
-        long contactAlpha = mActor.createRawContact(false, PERSON_ALPHA);
-        long contactBravo = mActor.createRawContact(false, PERSON_BRAVO);
-        long contactCharlie = mActor.createRawContact(false, PERSON_CHARLIE);
-        long contactCharlieDupe = mActor.createRawContact(false, PERSON_CHARLIE);
+        long contactAlpha = mActor.createRawContact(PERSON_ALPHA);
+        long contactBravo = mActor.createRawContact(PERSON_BRAVO);
+        long contactCharlie = mActor.createRawContact(PERSON_CHARLIE);
+        long contactCharlieDupe = mActor.createRawContact(PERSON_CHARLIE);
         setAggregationException(
                 AggregationExceptions.TYPE_KEEP_TOGETHER, contactCharlie, contactCharlieDupe);
-        long contactDelta = mActor.createRawContact(false, PERSON_DELTA);
+        long contactDelta = mActor.createRawContact(PERSON_DELTA);
 
         assertAggregated(contactCharlie, contactCharlieDupe);
 
@@ -144,7 +143,6 @@ public class GroupsTest extends BaseContactsProvider2Test {
         cursor.close();
     }
 
-    @MediumTest
     public void testGroupDirtySetOnChange() {
         Uri uri = ContentUris.withAppendedId(Groups.CONTENT_URI,
                 createGroup(mAccount, "gsid1", "title1"));
@@ -153,7 +151,6 @@ public class GroupsTest extends BaseContactsProvider2Test {
         assertDirty(uri, false);
     }
 
-    @MediumTest
     public void testMarkAsDirtyParameter() {
         Uri uri = ContentUris.withAppendedId(Groups.CONTENT_URI,
                 createGroup(mAccount, "gsid1", "title1"));
@@ -166,7 +163,6 @@ public class GroupsTest extends BaseContactsProvider2Test {
         assertDirty(uri, false);
     }
 
-    @MediumTest
     public void testGroupDirtyClearedWhenSetExplicitly() {
         Uri uri = ContentUris.withAppendedId(Groups.CONTENT_URI,
                 createGroup(mAccount, "gsid1", "title1"));
@@ -180,7 +176,6 @@ public class GroupsTest extends BaseContactsProvider2Test {
         assertDirty(uri, false);
     }
 
-    @MediumTest
     public void testGroupDeletion1() {
         long groupId = createGroup(mAccount, "g1", "gt1");
         Uri uri = ContentUris.withAppendedId(Groups.CONTENT_URI, groupId);
@@ -195,7 +190,6 @@ public class GroupsTest extends BaseContactsProvider2Test {
         assertEquals(0, getCount(uri, null, null));
     }
 
-    @MediumTest
     public void testGroupDeletion2() {
         long groupId = createGroup(mAccount, "g1", "gt1");
         Uri uri = ContentUris.withAppendedId(Groups.CONTENT_URI, groupId);
@@ -206,7 +200,6 @@ public class GroupsTest extends BaseContactsProvider2Test {
         assertEquals(0, getCount(uri, null, null));
     }
 
-    @MediumTest
     public void testGroupVersionUpdates() {
         Uri uri = ContentUris.withAppendedId(Groups.CONTENT_URI,
                 createGroup(mAccount, "gsid1", "title1"));
@@ -254,7 +247,6 @@ public class GroupsTest extends BaseContactsProvider2Test {
                         + (visible ? 1 : 0), null).withExpectedCount(1).build();
     }
 
-    @LargeTest
     public void testDelayVisibleTransaction() throws RemoteException, OperationApplicationException {
         final ContentValues values = new ContentValues();
 

@@ -15,17 +15,15 @@
  */
 package com.android.providers.contacts;
 
-import com.android.internal.util.HanziToPinyin;
-import com.android.internal.util.HanziToPinyin.Token;
-
 import android.content.ContentValues;
+import android.provider.ContactsContract.CommonDataKinds.StructuredName;
 import android.provider.ContactsContract.FullNameStyle;
 import android.provider.ContactsContract.PhoneticNameStyle;
-import android.provider.ContactsContract.CommonDataKinds.StructuredName;
 import android.text.TextUtils;
 
+import com.android.providers.contacts.util.NeededForTesting;
+
 import java.lang.Character.UnicodeBlock;
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.StringTokenizer;
@@ -63,6 +61,26 @@ public class NameSplitter {
     private final Locale mLocale;
     private final String mLanguage;
 
+    /**
+     * Two-Chracter long Korean family names.
+     * http://ko.wikipedia.org/wiki/%ED%95%9C%EA%B5%AD%EC%9D%98_%EB%B3%B5%EC%84%B1
+     */
+    private static final String[] KOREAN_TWO_CHARCTER_FAMILY_NAMES = {
+        "\uAC15\uC804", // Gang Jeon
+        "\uB0A8\uAD81", // Nam Goong
+        "\uB3C5\uACE0", // Dok Go
+        "\uB3D9\uBC29", // Dong Bang
+        "\uB9DD\uC808", // Mang Jeol
+        "\uC0AC\uACF5", // Sa Gong
+        "\uC11C\uBB38", // Seo Moon
+        "\uC120\uC6B0", // Seon Woo
+        "\uC18C\uBD09", // So Bong
+        "\uC5B4\uAE08", // Uh Geum
+        "\uC7A5\uACE1", // Jang Gok
+        "\uC81C\uAC08", // Je Gal
+        "\uD669\uBCF4"  // Hwang Bo
+    };
+
     public static class Name {
         public String prefix;
         public String givenNames;
@@ -90,6 +108,7 @@ public class NameSplitter {
             this.suffix = suffix;
         }
 
+        @NeededForTesting
         public String getPrefix() {
             return prefix;
         }
@@ -106,6 +125,7 @@ public class NameSplitter {
             return familyName;
         }
 
+        @NeededForTesting
         public String getSuffix() {
             return suffix;
         }
@@ -192,11 +212,11 @@ public class NameSplitter {
 
         @Override
         public String toString() {
-            return "[given: " + givenNames + " middle: " + middleName + " family: " + familyName
-                    + " ph/given: " + phoneticGivenName + " ph/middle: " + phoneticMiddleName
-                    + " ph/family: " + phoneticFamilyName + "]";
+            return "[prefix: " + prefix + " given: " + givenNames + " middle: " + middleName
+                    + " family: " + familyName + " suffix: " + suffix + " ph/given: "
+                    + phoneticGivenName + " ph/middle: " + phoneticMiddleName + " ph/family: "
+                    + phoneticFamilyName + "]";
         }
-
     }
 
     private static class NameTokenizer extends StringTokenizer {
@@ -335,6 +355,18 @@ public class NameSplitter {
             fullNameStyle = getAdjustedFullNameStyle(fullNameStyle);
         }
 
+        split(name, fullName, fullNameStyle);
+    }
+
+    /**
+     * Parses a full name and returns parsed components in the Name object
+     * with a given fullNameStyle.
+     */
+    public void split(Name name, String fullName, int fullNameStyle) {
+        if (fullName == null) {
+            return;
+        }
+
         name.fullNameStyle = fullNameStyle;
 
         switch (fullNameStyle) {
@@ -343,8 +375,11 @@ public class NameSplitter {
                 break;
 
             case FullNameStyle.JAPANESE:
+                splitJapaneseName(name, fullName);
+                break;
+
             case FullNameStyle.KOREAN:
-                splitJapaneseOrKoreanName(name, fullName);
+                splitKoreanName(name, fullName);
                 break;
 
             default:
@@ -427,7 +462,7 @@ public class NameSplitter {
      *   [family name] given name(s)
      * </pre>
      */
-    private void splitJapaneseOrKoreanName(Name name, String fullName) {
+    private void splitJapaneseName(Name name, String fullName) {
         StringTokenizer tokenizer = new StringTokenizer(fullName);
         while (tokenizer.hasMoreTokens()) {
             String token = tokenizer.nextToken();
@@ -443,29 +478,71 @@ public class NameSplitter {
     }
 
     /**
+     * Splits a full name composed according to the Korean tradition:
+     * <pre>
+     *   [family name] given name(s)
+     * </pre>
+     */
+    private void splitKoreanName(Name name, String fullName) {
+        StringTokenizer tokenizer = new StringTokenizer(fullName);
+        if (tokenizer.countTokens() > 1) {
+            // Each name can be identified by separators.
+            while (tokenizer.hasMoreTokens()) {
+                String token = tokenizer.nextToken();
+                if (name.givenNames == null) {
+                    name.givenNames = token;
+                } else if (name.familyName == null) {
+                    name.familyName = name.givenNames;
+                    name.givenNames = token;
+                } else {
+                    name.givenNames += " " + token;
+                }
+            }
+        } else {
+            // There is no separator. Try to guess family name.
+            // The length of most family names is 1.
+            int familyNameLength = 1;
+
+            // Compare with 2-length family names.
+            for (String twoLengthFamilyName : KOREAN_TWO_CHARCTER_FAMILY_NAMES) {
+                if (fullName.startsWith(twoLengthFamilyName)) {
+                    familyNameLength = 2;
+                    break;
+                }
+            }
+
+            name.familyName = fullName.substring(0, familyNameLength);
+            if (fullName.length() > familyNameLength) {
+                name.givenNames = fullName.substring(familyNameLength);
+            }
+        }
+    }
+
+    /**
      * Concatenates components of a name according to the rules dictated by the name style.
      *
      * @param givenNameFirst is ignored for CJK display name styles
      */
-    public String join(Name name, boolean givenNameFirst) {
+    public String join(Name name, boolean givenNameFirst, boolean includePrefix) {
+        String prefix = includePrefix ? name.prefix : null;
         switch (name.fullNameStyle) {
             case FullNameStyle.CJK:
             case FullNameStyle.CHINESE:
             case FullNameStyle.KOREAN:
-                return join(name.familyName, name.middleName, name.givenNames, name.suffix,
-                        false, false, false);
+                return join(prefix, name.familyName, name.middleName, name.givenNames,
+                        name.suffix, false, false, false);
 
             case FullNameStyle.JAPANESE:
-                return join(name.familyName, name.middleName, name.givenNames, name.suffix,
-                        true, false, false);
+                return join(prefix, name.familyName, name.middleName, name.givenNames,
+                        name.suffix, true, false, false);
 
             default:
                 if (givenNameFirst) {
-                    return join(name.givenNames, name.middleName, name.familyName, name.suffix,
-                            true, false, true);
+                    return join(prefix, name.givenNames, name.middleName, name.familyName,
+                            name.suffix, true, false, true);
                 } else {
-                    return join(name.familyName, name.givenNames, name.middleName, name.suffix,
-                            true, true, true);
+                    return join(prefix, name.familyName, name.givenNames, name.middleName,
+                            name.suffix, true, true, true);
                 }
         }
     }
@@ -475,15 +552,22 @@ public class NameSplitter {
      * family name + middle name + given name(s).
      */
     public String joinPhoneticName(Name name) {
-        return join(name.phoneticFamilyName, name.phoneticMiddleName,
-                name.phoneticGivenName, null, true, false, false);
+        return join(null, name.phoneticFamilyName,
+                name.phoneticMiddleName, name.phoneticGivenName, null, true, false, false);
     }
 
     /**
      * Concatenates parts of a full name inserting spaces and commas as specified.
      */
-    private String join(String part1, String part2, String part3, String suffix,
+    private String join(String prefix, String part1, String part2, String part3, String suffix,
             boolean useSpace, boolean useCommaAfterPart1, boolean useCommaAfterPart3) {
+        prefix = prefix == null ? null: prefix.trim();
+        part1 = part1 == null ? null: part1.trim();
+        part2 = part2 == null ? null: part2.trim();
+        part3 = part3 == null ? null: part3.trim();
+        suffix = suffix == null ? null: suffix.trim();
+
+        boolean hasPrefix = !TextUtils.isEmpty(prefix);
         boolean hasPart1 = !TextUtils.isEmpty(part1);
         boolean hasPart2 = !TextUtils.isEmpty(part2);
         boolean hasPart3 = !TextUtils.isEmpty(part3);
@@ -491,8 +575,17 @@ public class NameSplitter {
 
         boolean isSingleWord = true;
         String singleWord = null;
+
+        if (hasPrefix) {
+            singleWord = prefix;
+        }
+
         if (hasPart1) {
-            singleWord = part1;
+            if (singleWord != null) {
+                isSingleWord = false;
+            } else {
+                singleWord = part1;
+            }
         }
 
         if (hasPart2) {
@@ -524,12 +617,20 @@ public class NameSplitter {
         }
 
         StringBuilder sb = new StringBuilder();
+
+        if (hasPrefix) {
+            sb.append(prefix);
+        }
+
         if (hasPart1) {
+            if (hasPrefix) {
+                sb.append(' ');
+            }
             sb.append(part1);
         }
 
         if (hasPart2) {
-            if (hasPart1) {
+            if (hasPrefix || hasPart1) {
                 if (useCommaAfterPart1) {
                     sb.append(',');
                 }
@@ -541,7 +642,7 @@ public class NameSplitter {
         }
 
         if (hasPart3) {
-            if (hasPart1 || hasPart2) {
+            if (hasPrefix || hasPart1 || hasPart2) {
                 if (useSpace) {
                     sb.append(' ');
                 }
@@ -550,7 +651,7 @@ public class NameSplitter {
         }
 
         if (hasSuffix) {
-            if (hasPart1 || hasPart2 || hasPart3) {
+            if (hasPrefix || hasPart1 || hasPart2 || hasPart3) {
                 if (useCommaAfterPart3) {
                     sb.append(',');
                 }
@@ -621,6 +722,9 @@ public class NameSplitter {
 
         String firstToken = tokens.mTokens[tokens.mStartPointer];
         if (mPrefixesSet.contains(firstToken.toUpperCase())) {
+            if (tokens.hasDot(tokens.mStartPointer)) {
+                firstToken += '.';
+            }
             name.prefix = firstToken;
             tokens.mStartPointer++;
         }
@@ -635,6 +739,18 @@ public class NameSplitter {
         }
 
         String lastToken = tokens.mTokens[tokens.mEndPointer - 1];
+
+        // Take care of an explicit comma-separated suffix
+        if (tokens.mEndPointer - tokens.mStartPointer > 2
+                && tokens.hasComma(tokens.mEndPointer - 2)) {
+            if (tokens.hasDot(tokens.mEndPointer - 1)) {
+                lastToken += '.';
+            }
+            name.suffix = lastToken;
+            tokens.mEndPointer--;
+            return;
+        }
+
         if (lastToken.length() > mMaxSuffixLength) {
             return;
         }
@@ -833,6 +949,24 @@ public class NameSplitter {
         }
 
         guess = guessFullNameStyle(name.middleName);
+        if (guess != FullNameStyle.UNDEFINED) {
+            if (guess != FullNameStyle.CJK && guess != FullNameStyle.WESTERN) {
+                name.fullNameStyle = guess;
+                return;
+            }
+            bestGuess = guess;
+        }
+
+        guess = guessFullNameStyle(name.prefix);
+        if (guess != FullNameStyle.UNDEFINED) {
+            if (guess != FullNameStyle.CJK && guess != FullNameStyle.WESTERN) {
+                name.fullNameStyle = guess;
+                return;
+            }
+            bestGuess = guess;
+        }
+
+        guess = guessFullNameStyle(name.suffix);
         if (guess != FullNameStyle.UNDEFINED) {
             if (guess != FullNameStyle.CJK && guess != FullNameStyle.WESTERN) {
                 name.fullNameStyle = guess;

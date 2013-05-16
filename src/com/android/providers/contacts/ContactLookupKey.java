@@ -29,6 +29,10 @@ public class ContactLookupKey {
     public static final int LOOKUP_TYPE_SOURCE_ID = 0;
     public static final int LOOKUP_TYPE_DISPLAY_NAME = 1;
     public static final int LOOKUP_TYPE_RAW_CONTACT_ID = 2;
+    public static final int LOOKUP_TYPE_PROFILE = 3;
+
+    // The Profile contact will always have a lookup key of "profile".
+    public static final String PROFILE_LOOKUP_KEY = "profile";
 
     public static class LookupKeySegment implements Comparable<LookupKeySegment> {
         public int accountHashCode;
@@ -52,16 +56,17 @@ public class ContactLookupKey {
      * Returns a short hash code that functions as an additional precaution against the exceedingly
      * improbable collision between sync IDs in different accounts.
      */
-    public static int getAccountHashCode(String accountType, String accountName) {
-        if (accountType == null || accountName == null) {
+    public static int getAccountHashCode(String accountTypeWithDataSet, String accountName) {
+        if (accountTypeWithDataSet == null || accountName == null) {
             return 0;
         }
 
-        return (accountType.hashCode() ^ accountName.hashCode()) & 0xFFF;
+        return (accountTypeWithDataSet.hashCode() ^ accountName.hashCode()) & 0xFFF;
     }
 
-    public static void appendToLookupKey(StringBuilder lookupKey, String accountType,
-            String accountName, long rawContactId, String sourceId, String displayName) {
+    public static void appendToLookupKey(StringBuilder lookupKey, String accountTypeWithDataSet,
+            String accountName, long rawContactId, String sourceId,
+            String displayName) {
         if (displayName == null) {
             displayName = "";
         }
@@ -70,7 +75,7 @@ public class ContactLookupKey {
             lookupKey.append(".");
         }
 
-        lookupKey.append(getAccountHashCode(accountType, accountName));
+        lookupKey.append(getAccountHashCode(accountTypeWithDataSet, accountName));
         if (sourceId == null) {
             lookupKey.append('r').append(rawContactId).append('-').append(
                     NameNormalizer.normalize(displayName));
@@ -103,6 +108,16 @@ public class ContactLookupKey {
 
     public ArrayList<LookupKeySegment> parse(String lookupKey) {
         ArrayList<LookupKeySegment> list = new ArrayList<LookupKeySegment>();
+
+        // If the lookup key is for the profile, just return a segment list indicating that.  The
+        // caller should already be in a context in which the only contact in the database is the
+        // user's profile.
+        if (PROFILE_LOOKUP_KEY.equals(lookupKey)) {
+            LookupKeySegment profileSegment = new LookupKeySegment();
+            profileSegment.lookupType = LOOKUP_TYPE_PROFILE;
+            list.add(profileSegment);
+            return list;
+        }
 
         String string = Uri.decode(lookupKey);
         int offset = 0;

@@ -16,38 +16,55 @@
 
 package com.android.providers.contacts;
 
+import android.accounts.Account;
+import android.accounts.AccountManager;
+import android.accounts.AccountManagerCallback;
+import android.accounts.AccountManagerFuture;
+import android.accounts.AuthenticatorException;
+import android.accounts.OnAccountsUpdateListener;
+import android.accounts.OperationCanceledException;
 import android.content.ContentProvider;
 import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ProviderInfo;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.database.Cursor;
+import android.location.Country;
+import android.location.CountryDetector;
+import android.location.CountryListener;
 import android.net.Uri;
-import android.os.Binder;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.BaseColumns;
 import android.provider.ContactsContract;
 import android.provider.ContactsContract.AggregationExceptions;
 import android.provider.ContactsContract.CommonDataKinds;
+import android.provider.ContactsContract.CommonDataKinds.Email;
+import android.provider.ContactsContract.CommonDataKinds.Phone;
 import android.provider.ContactsContract.Contacts;
 import android.provider.ContactsContract.Data;
 import android.provider.ContactsContract.RawContacts;
 import android.provider.ContactsContract.StatusUpdates;
-import android.provider.ContactsContract.CommonDataKinds.Email;
-import android.provider.ContactsContract.CommonDataKinds.Phone;
 import android.test.IsolatedContext;
 import android.test.RenamingDelegatingContext;
 import android.test.mock.MockContentResolver;
 import android.test.mock.MockContext;
-import android.test.mock.MockPackageManager;
-import android.test.mock.MockResources;
-import android.util.TypedValue;
 
-import java.util.HashMap;
+import com.android.providers.contacts.util.MockSharedPreferences;
+import com.google.android.collect.Sets;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.Arrays;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * Helper class that encapsulates an "actor" which is owned by a specific
@@ -67,6 +84,56 @@ public class ContactsActor {
     public String packageName;
     public MockContentResolver resolver;
     public ContentProvider provider;
+    private Country mMockCountry = new Country("us", 0);
+
+    private Account[] mAccounts = new Account[0];
+
+    private Set<String> mGrantedPermissions = Sets.newHashSet();
+    private final Set<Uri> mGrantedUriPermissions = Sets.newHashSet();
+
+    private CountryDetector mMockCountryDetector = new CountryDetector(null){
+        @Override
+        public Country detectCountry() {
+            return mMockCountry;
+        }
+
+        @Override
+        public void addCountryListener(CountryListener listener, Looper looper) {
+        }
+    };
+
+    private AccountManager mMockAccountManager;
+
+    private class MockAccountManager extends AccountManager {
+        public MockAccountManager(Context conteact) {
+            super(context, null, null);
+        }
+
+        @Override
+        public void addOnAccountsUpdatedListener(OnAccountsUpdateListener listener,
+                Handler handler, boolean updateImmediately) {
+            // do nothing
+        }
+
+        @Override
+        public Account[] getAccounts() {
+            return mAccounts;
+        }
+
+        @Override
+        public AccountManagerFuture<Account[]> getAccountsByTypeAndFeatures(
+                final String type, final String[] features,
+                AccountManagerCallback<Account[]> callback, Handler handler) {
+            return null;
+        }
+
+        @Override
+        public String blockingGetAuthToken(Account account, String authTokenType,
+                boolean notifyAuthFailure)
+                throws OperationCanceledException, IOException, AuthenticatorException {
+            return null;
+        }
+    }
 
     private IsolatedContext mProviderContext;
 
@@ -79,12 +146,47 @@ public class ContactsActor {
     public ContactsActor(Context overallContext, String packageName,
             Class<? extends ContentProvider> providerClass, String authority) throws Exception {
         resolver = new MockContentResolver();
-        context = new RestrictionMockContext(overallContext, packageName, resolver);
+        context = new RestrictionMockContext(overallContext, packageName, resolver,
+                mGrantedPermissions, mGrantedUriPermissions);
         this.packageName = packageName;
+
+        // Let the Secure class initialize the settings provider, which is done when we first
+        // tries to get any setting.  Because our mock context/content resolver doesn't have the
+        // settings provider, we need to do this with an actual context, before other classes
+        // try to do this with a mock context.
+        // (Otherwise ContactsProvider2.initialzie() will crash trying to get a setting with
+        // a mock context.)
+        android.provider.Settings.Secure.getString(overallContext.getContentResolver(), "dummy");
 
         RenamingDelegatingContext targetContextWrapper = new RenamingDelegatingContext(context,
                 overallContext, FILENAME_PREFIX);
-        mProviderContext = new IsolatedContext(resolver, targetContextWrapper);
+        mProviderContext = new IsolatedContext(resolver, targetContextWrapper) {
+            private final MockSharedPreferences mPrefs = new MockSharedPreferences();
+
+            @Override
+            public File getFilesDir() {
+                // TODO: Need to figure out something more graceful than this.
+                return new File("/data/data/com.android.providers.contacts.tests/files");
+            }
+
+            @Override
+            public Object getSystemService(String name) {
+                if (Context.COUNTRY_DETECTOR.equals(name)) {
+                    return mMockCountryDetector;
+                }
+                if (Context.ACCOUNT_SERVICE.equals(name)) {
+                    return mMockAccountManager;
+                }
+                return super.getSystemService(name);
+            }
+
+            @Override
+            public SharedPreferences getSharedPreferences(String name, int mode) {
+                return mPrefs;
+            }
+        };
+
+        mMockAccountManager = new MockAccountManager(mProviderContext);
         provider = addProvider(providerClass, authority);
     }
 
@@ -95,9 +197,27 @@ public class ContactsActor {
     public ContentProvider addProvider(Class<? extends ContentProvider> providerClass,
             String authority) throws Exception {
         ContentProvider provider = providerClass.newInstance();
-        provider.attachInfo(mProviderContext, null);
+        ProviderInfo info = new ProviderInfo();
+        info.authority = authority;
+        provider.attachInfo(mProviderContext, info);
         resolver.addProvider(authority, provider);
         return provider;
+    }
+
+    public void addPermissions(String... permissions) {
+        mGrantedPermissions.addAll(Arrays.asList(permissions));
+    }
+
+    public void removePermissions(String... permissions) {
+        mGrantedPermissions.removeAll(Arrays.asList(permissions));
+    }
+
+    public void addUriPermissions(Uri... uris) {
+        mGrantedUriPermissions.addAll(Arrays.asList(uris));
+    }
+
+    public void removeUriPermissions(Uri... uris) {
+        mGrantedUriPermissions.removeAll(Arrays.asList(uris));
     }
 
     /**
@@ -113,20 +233,25 @@ public class ContactsActor {
     private static class RestrictionMockContext extends MockContext {
         private final Context mOverallContext;
         private final String mReportedPackageName;
-        private final RestrictionMockPackageManager mPackageManager;
+        private final ContactsMockPackageManager mPackageManager;
         private final ContentResolver mResolver;
         private final Resources mRes;
+        private final Set<String> mGrantedPermissions;
+        private final Set<Uri> mGrantedUriPermissions;
 
         /**
          * Create a {@link Context} under the given package name.
          */
         public RestrictionMockContext(Context overallContext, String reportedPackageName,
-                ContentResolver resolver) {
+                ContentResolver resolver, Set<String> grantedPermissions,
+                Set<Uri> grantedUriPermissions) {
             mOverallContext = overallContext;
             mReportedPackageName = reportedPackageName;
             mResolver = resolver;
+            mGrantedPermissions = grantedPermissions;
+            mGrantedUriPermissions = grantedUriPermissions;
 
-            mPackageManager = new RestrictionMockPackageManager();
+            mPackageManager = new ContactsMockPackageManager();
             mPackageManager.addPackage(1000, PACKAGE_GREY);
             mPackageManager.addPackage(2000, PACKAGE_RED);
             mPackageManager.addPackage(3000, PACKAGE_GREEN);
@@ -136,7 +261,7 @@ public class ContactsActor {
             Configuration configuration = new Configuration(resources.getConfiguration());
             configuration.locale = Locale.US;
             resources.updateConfiguration(configuration, resources.getDisplayMetrics());
-            mRes = new RestrictionMockResources(resources);
+            mRes = resources;
         }
 
         @Override
@@ -158,129 +283,101 @@ public class ContactsActor {
         public ContentResolver getContentResolver() {
             return mResolver;
         }
-    }
 
-    private static class RestrictionMockResources extends MockResources {
-        private static final String UNRESTRICTED = "unrestricted_packages";
-        private static final int UNRESTRICTED_ID = 1024;
+        @Override
+        public ApplicationInfo getApplicationInfo() {
+            ApplicationInfo ai = new ApplicationInfo();
+            ai.packageName = "contactsTestPackage";
+            return ai;
+        }
 
-        private static final String[] UNRESTRICTED_LIST = new String[] {
-            PACKAGE_GREY
-        };
+        // All permission checks are implemented to simply check against the granted permission set.
 
-        private final Resources mRes;
-
-        public RestrictionMockResources(Resources res) {
-            mRes = res;
+        @Override
+        public int checkPermission(String permission, int pid, int uid) {
+            return checkCallingPermission(permission);
         }
 
         @Override
-        public int getIdentifier(String name, String defType, String defPackage) {
-            if (UNRESTRICTED.equals(name)) {
-                return UNRESTRICTED_ID;
+        public int checkCallingPermission(String permission) {
+            if (mGrantedPermissions.contains(permission)) {
+                return PackageManager.PERMISSION_GRANTED;
             } else {
-                return mRes.getIdentifier(name, defType, defPackage);
+                return PackageManager.PERMISSION_DENIED;
             }
         }
 
         @Override
-        public String[] getStringArray(int id) throws NotFoundException {
-            if (id == UNRESTRICTED_ID) {
-                return UNRESTRICTED_LIST;
+        public int checkUriPermission(Uri uri, int pid, int uid, int modeFlags) {
+            return checkCallingUriPermission(uri, modeFlags);
+        }
+
+        @Override
+        public int checkCallingUriPermission(Uri uri, int modeFlags) {
+            if (mGrantedUriPermissions.contains(uri)) {
+                return PackageManager.PERMISSION_GRANTED;
             } else {
-                return mRes.getStringArray(id);
+                return PackageManager.PERMISSION_DENIED;
             }
         }
 
         @Override
-        public void getValue(int id, TypedValue outValue, boolean resolveRefs)
-                throws NotFoundException {
-            mRes.getValue(id, outValue, resolveRefs);
+        public int checkCallingOrSelfPermission(String permission) {
+            return checkCallingPermission(permission);
         }
 
         @Override
-        public String getString(int id) throws NotFoundException {
-            return mRes.getString(id);
+        public void enforcePermission(String permission, int pid, int uid, String message) {
+            enforceCallingPermission(permission, message);
         }
 
         @Override
-        public String getString(int id, Object... formatArgs) throws NotFoundException {
-            return mRes.getString(id, formatArgs);
+        public void enforceCallingPermission(String permission, String message) {
+            if (!mGrantedPermissions.contains(permission)) {
+                throw new SecurityException(message);
+            }
         }
 
         @Override
-        public CharSequence getText(int id) throws NotFoundException {
-            return mRes.getText(id);
+        public void enforceCallingOrSelfPermission(String permission, String message) {
+            enforceCallingPermission(permission, message);
+        }
+
+        @Override
+        public void sendBroadcast(Intent intent) {
+            mOverallContext.sendBroadcast(intent);
+        }
+
+        @Override
+        public void sendBroadcast(Intent intent, String receiverPermission) {
+            mOverallContext.sendBroadcast(intent, receiverPermission);
         }
     }
 
-    private static String sCallingPackage = null;
+    static String sCallingPackage = null;
 
     void ensureCallingPackage() {
         sCallingPackage = this.packageName;
     }
 
-    /**
-     * Mock {@link PackageManager} that knows about a specific set of packages
-     * to help test security models. Because {@link Binder#getCallingUid()}
-     * can't be mocked, you'll have to find your mock-UID manually using your
-     * {@link Context#getPackageName()}.
-     */
-    private static class RestrictionMockPackageManager extends MockPackageManager {
-        private final HashMap<Integer, String> mForward = new HashMap<Integer, String>();
-        private final HashMap<String, Integer> mReverse = new HashMap<String, Integer>();
-
-        public RestrictionMockPackageManager() {
-        }
-
-        /**
-         * Add a UID-to-package mapping, which is then stored internally.
-         */
-        public void addPackage(int packageUid, String packageName) {
-            mForward.put(packageUid, packageName);
-            mReverse.put(packageName, packageUid);
-        }
-
-        @Override
-        public String getNameForUid(int uid) {
-            return "name-for-uid";
-        }
-
-        @Override
-        public String[] getPackagesForUid(int uid) {
-            return new String[] { sCallingPackage };
-        }
-
-        @Override
-        public ApplicationInfo getApplicationInfo(String packageName, int flags) {
-            ApplicationInfo info = new ApplicationInfo();
-            Integer uid = mReverse.get(packageName);
-            info.uid = (uid != null) ? uid : -1;
-            return info;
-        }
-    }
-
-    public long createRawContact(boolean isRestricted, String name) {
+    public long createRawContact(String name) {
         ensureCallingPackage();
-        long rawContactId = createRawContact(isRestricted);
+        long rawContactId = createRawContact();
         createName(rawContactId, name);
         return rawContactId;
     }
 
-    public long createRawContact(boolean isRestricted) {
+    public long createRawContact() {
         ensureCallingPackage();
         final ContentValues values = new ContentValues();
-        if (isRestricted) {
-            values.put(RawContacts.IS_RESTRICTED, 1);
-        }
 
         Uri rawContactUri = resolver.insert(RawContacts.CONTENT_URI, values);
         return ContentUris.parseId(rawContactUri);
     }
 
-    public long createRawContactWithStatus(boolean isRestricted, String name, String address,
+    public long createRawContactWithStatus(String name, String address,
             String status) {
-        final long rawContactId = createRawContact(isRestricted, name);
+        final long rawContactId = createRawContact(name);
         final long dataId = createEmail(rawContactId, address);
         createStatus(dataId, status);
         return rawContactId;
@@ -416,6 +513,10 @@ public class ContactsActor {
         values.put(AggregationExceptions.RAW_CONTACT_ID2, rawContactId2);
         values.put(AggregationExceptions.TYPE, type);
         resolver.update(AggregationExceptions.CONTENT_URI, values, null, null);
+    }
+
+    public void setAccounts(Account[] accounts) {
+        mAccounts = accounts;
     }
 
     /**

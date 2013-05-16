@@ -15,10 +15,12 @@
  */
 package com.android.providers.contacts;
 
-import com.ibm.icu4jni.text.CollationAttribute;
-import com.ibm.icu4jni.text.CollationKey; // TODO: java.text.CollationKey post-froyo
-import com.ibm.icu4jni.text.Collator;
-import com.ibm.icu4jni.text.RuleBasedCollator;
+import com.android.providers.contacts.util.Hex;
+import com.google.common.annotations.VisibleForTesting;
+
+import java.text.CollationKey;
+import java.text.Collator;
+import java.text.RuleBasedCollator;
 import java.util.Locale;
 
 /**
@@ -27,27 +29,53 @@ import java.util.Locale;
  */
 public class NameNormalizer {
 
-    private static final RuleBasedCollator sCompressingCollator;
-    static {
-        sCompressingCollator = (RuleBasedCollator)Collator.getInstance(Locale.getDefault());
-        sCompressingCollator.setStrength(Collator.PRIMARY);
-        sCompressingCollator.setDecomposition(Collator.CANONICAL_DECOMPOSITION);
+    private static final Object sCollatorLock = new Object();
+
+    private static Locale sCollatorLocale;
+
+    private static RuleBasedCollator sCachedCompressingCollator;
+    private static RuleBasedCollator sCachedComplexityCollator;
+
+    /**
+     * Ensure that the cached collators are for the current locale.
+     */
+    private static void ensureCollators() {
+        final Locale locale = Locale.getDefault();
+        if (locale.equals(sCollatorLocale)) {
+            return;
+        }
+        sCollatorLocale = locale;
+
+        sCachedCompressingCollator = (RuleBasedCollator) Collator.getInstance(locale);
+        sCachedCompressingCollator.setStrength(Collator.PRIMARY);
+        sCachedCompressingCollator.setDecomposition(Collator.CANONICAL_DECOMPOSITION);
+
+        sCachedComplexityCollator = (RuleBasedCollator) Collator.getInstance(locale);
+        sCachedComplexityCollator.setStrength(Collator.SECONDARY);
     }
 
-    private static final RuleBasedCollator sComplexityCollator;
-    static {
-        sComplexityCollator = (RuleBasedCollator)Collator.getInstance(Locale.getDefault());
-        sComplexityCollator.setStrength(Collator.TERTIARY);
-        sComplexityCollator.setAttribute(CollationAttribute.CASE_FIRST,
-                CollationAttribute.VALUE_LOWER_FIRST);
+    @VisibleForTesting
+    static RuleBasedCollator getCompressingCollator() {
+        synchronized (sCollatorLock) {
+            ensureCollators();
+            return sCachedCompressingCollator;
+        }
+    }
+
+    @VisibleForTesting
+    static RuleBasedCollator getComplexityCollator() {
+        synchronized (sCollatorLock) {
+            ensureCollators();
+            return sCachedComplexityCollator;
+        }
     }
 
     /**
      * Converts the supplied name to a string that can be used to perform approximate matching
-     * of names.  It ignores non-letter characters and removes accents.
+     * of names.  It ignores non-letter, non-digit characters, and removes accents.
      */
     public static String normalize(String name) {
-        CollationKey key = sCompressingCollator.getCollationKey(lettersAndDigitsOnly(name));
+        CollationKey key = getCompressingCollator().getCollationKey(lettersAndDigitsOnly(name));
         return Hex.encodeHex(key.toByteArray(), true);
     }
 
@@ -56,17 +84,24 @@ public class NameNormalizer {
      * of mixed case characters, accents and, if all else is equal, length.
      */
     public static int compareComplexity(String name1, String name2) {
-        int diff = sComplexityCollator.compare(lettersAndDigitsOnly(name1),
-                lettersAndDigitsOnly(name2));
+        String clean1 = lettersAndDigitsOnly(name1);
+        String clean2 = lettersAndDigitsOnly(name2);
+        int diff = getComplexityCollator().compare(clean1, clean2);
         if (diff != 0) {
             return diff;
         }
-
+        // compareTo sorts uppercase first. We know that there are no non-case
+        // differences from the above test, so we can negate here to get the
+        // lowercase-first comparison we really want...
+        diff = -clean1.compareTo(clean2);
+        if (diff != 0) {
+            return diff;
+        }
         return name1.length() - name2.length();
     }
 
     /**
-     * Returns a string containing just the letters from the original string.
+     * Returns a string containing just the letters and digits from the original string.
      */
     private static String lettersAndDigitsOnly(String name) {
         char[] letters = name.toCharArray();

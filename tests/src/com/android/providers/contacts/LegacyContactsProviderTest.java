@@ -23,19 +23,18 @@ import android.content.ContentValues;
 import android.database.Cursor;
 import android.net.Uri;
 import android.provider.Contacts;
-import android.provider.ContactsContract;
 import android.provider.Contacts.ContactMethods;
 import android.provider.Contacts.Extensions;
 import android.provider.Contacts.GroupMembership;
 import android.provider.Contacts.Groups;
-import android.provider.Contacts.Intents;
 import android.provider.Contacts.Organizations;
 import android.provider.Contacts.People;
 import android.provider.Contacts.Phones;
 import android.provider.Contacts.Photos;
 import android.provider.Contacts.Presence;
 import android.provider.Contacts.Settings;
-import android.test.suitebuilder.annotation.LargeTest;
+import android.provider.ContactsContract;
+import android.test.suitebuilder.annotation.MediumTest;
 
 import java.io.IOException;
 
@@ -47,8 +46,11 @@ import java.io.IOException;
  * adb shell am instrument -e class com.android.providers.contacts.LegacyContactsProviderTest -w \
  *         com.android.providers.contacts.tests/android.test.InstrumentationTestRunner
  * </code>
+ *
+ * Note that this SHOULD be a large test, but had to be bumped down to medium due to a bug in the
+ * SQLite cleanup code.
  */
-@LargeTest
+@MediumTest
 @SuppressWarnings("deprecation")
 public class LegacyContactsProviderTest extends BaseContactsProvider2Test {
 
@@ -392,19 +394,20 @@ public class LegacyContactsProviderTest extends BaseContactsProvider2Test {
         values.put(Phones.ISPRIMARY, 1);
 
         Uri uri = mResolver.insert(Phones.CONTENT_URI, values);
-
+        ContentValues expectedResults[] = new ContentValues[1];
         // Adding another value to assert
-        values.put(Phones.NUMBER_KEY, "11446640081");
+        expectedResults[0] = new ContentValues(values);
+        expectedResults[0].put(Phones.NUMBER_KEY, "11446640081");
 
         // The result is joined with People
-        putContactValues(values);
-        assertStoredValues(uri, values);
+        putContactValues(expectedResults[0]);
+        assertStoredValues(uri, expectedResults);
         assertSelection(Phones.CONTENT_URI, values, "phones",
                 Phones._ID, ContentUris.parseId(uri));
 
         // Access the phone through People
         Uri twigUri = Uri.withAppendedPath(personUri, People.Phones.CONTENT_DIRECTORY);
-        assertStoredValues(twigUri, values);
+        assertStoredValues(twigUri, expectedResults);
 
         // Now the person should be joined with Phone
         values.clear();
@@ -443,7 +446,10 @@ public class LegacyContactsProviderTest extends BaseContactsProvider2Test {
 
         mResolver.update(uri, values, null, null);
 
-        assertStoredValues(uri, values);
+        ContentValues[] expectedValues = new ContentValues[1];
+        expectedValues[0] = values;
+        expectedValues[0].put(Phones.NUMBER_KEY, "36645550081");
+        assertStoredValues(uri, expectedValues);
     }
 
     public void testPhonesFilterQuery() {
@@ -456,13 +462,16 @@ public class LegacyContactsProviderTest extends BaseContactsProvider2Test {
         values.put(Phones.PERSON_ID, personId);
         values.put(Phones.TYPE, Phones.TYPE_CUSTOM);
         values.put(Phones.LABEL, "Directory");
-        values.put(Phones.NUMBER, "1-800-4664-411");
+        values.put(Phones.NUMBER, "800-4664-411");
         values.put(Phones.ISPRIMARY, 1);
 
         Uri uri = mResolver.insert(Phones.CONTENT_URI, values);
 
-        Uri filterUri1 = Uri.withAppendedPath(Phones.CONTENT_FILTER_URL, "8004664411");
-        assertStoredValues(filterUri1, values);
+        Uri filterUri1 = Uri.withAppendedPath(Phones.CONTENT_FILTER_URL, "18004664411");
+        ContentValues[] expectedValues = new ContentValues[1];
+        expectedValues[0] = values;
+        expectedValues[0].put(Phones.NUMBER_KEY, "1144664008");
+        assertStoredValues(filterUri1, expectedValues);
 
         Uri filterUri2 = Uri.withAppendedPath(Phones.CONTENT_FILTER_URL, "7773334444");
         assertEquals(0, getCount(filterUri2, null, null));
@@ -698,7 +707,10 @@ public class LegacyContactsProviderTest extends BaseContactsProvider2Test {
     }
 
     public void testPhotoUpdate() throws Exception {
-        byte[] photo = loadTestPhoto();
+        byte[] photo = loadPhotoFromResource(
+                com.android.providers.contacts.tests.R.drawable.earth_small, PhotoSize.ORIGINAL);
+        byte[] thumbnailedPhoto = loadPhotoFromResource(
+                com.android.providers.contacts.tests.R.drawable.earth_small, PhotoSize.THUMBNAIL);
 
         ContentValues values = new ContentValues();
         Uri personUri = mResolver.insert(People.CONTENT_URI, values);
@@ -713,13 +725,16 @@ public class LegacyContactsProviderTest extends BaseContactsProvider2Test {
 
         Uri photoUri = Uri.withAppendedPath(personUri, Photos.CONTENT_DIRECTORY);
         mResolver.update(photoUri, values, null, null);
+        values.put(Photos.DATA, thumbnailedPhoto);
         assertStoredValues(photoUri, values);
 
         long photoId = Long.parseLong(getStoredValue(photoUri, Photos._ID));
 
         values.put(Photos.LOCAL_VERSION, "11");
+        values.put(Photos.DATA, photo);
         Uri contentUri = ContentUris.withAppendedId(Photos.CONTENT_URI, photoId);
         mResolver.update(contentUri, values, null, null);
+        values.put(Photos.DATA, thumbnailedPhoto);
         assertStoredValues(contentUri, values);
         assertStoredValues(photoUri, values);
     }

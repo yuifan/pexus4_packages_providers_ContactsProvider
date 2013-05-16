@@ -19,11 +19,11 @@ package com.android.providers.contacts;
 import android.provider.ContactsContract.FullNameStyle;
 import android.test.suitebuilder.annotation.SmallTest;
 
+import junit.framework.TestCase;
+
 import java.text.Collator;
 import java.util.Arrays;
 import java.util.Locale;
-
-import junit.framework.TestCase;
 
 /**
  * Unit tests for {@link NameLookupBuilder}.
@@ -191,13 +191,36 @@ public class NameLookupBuilderTest extends TestCase {
         mBuilder.insertNameLookup(0, 0, "\u695A\u8FAD", FullNameStyle.CHINESE);
         assertEquals(
                 "(0:\u695A\u8FAD)" +
-                "(2:\u695A\u8FAD)" +
-                "(6:\u695A\u8FAD)" +
-                "(6:CI)" +
-                "(6:\u8FAD)" +
-                "(6:CHUCI)" +
-                "(6:CC)" +
-                "(6:C)", mBuilder.inserted());
+                "(2:\u695A\u8FAD)",
+                mBuilder.inserted());
+    }
+
+    public void testKoreanName() {
+        // Only run this test when Korean collation is supported.
+        if (!Arrays.asList(Collator.getAvailableLocales()).contains(Locale.KOREA)) {
+            return;
+        }
+
+        // Lee Sang Il
+        mBuilder.insertNameLookup(0, 0, "\uC774\uC0C1\uC77C", FullNameStyle.KOREAN);
+        assertEquals(
+                "(0:\uC774\uC0C1\uC77C)" + // Lee Sang Il
+                "(2:\uC774\uC0C1\uC77C)",
+                mBuilder.inserted());
+    }
+
+    public void testKoreanNameWithTwoCharactersFamilyName() {
+        // Only run this test when Chinese collation is supported.
+        if (!Arrays.asList(Collator.getAvailableLocales()).contains(Locale.KOREA)) {
+            return;
+        }
+
+        // Sun Woo Young Nyeu
+        mBuilder.insertNameLookup(0, 0, "\uC120\uC6B0\uC6A9\uB140", FullNameStyle.KOREAN);
+        assertEquals(
+                "(0:\uC120\uC6B0\uC6A9\uB140)" + // Sun Woo Young Nyeu
+                "(2:\uC120\uC6B0\uC6A9\uB140)",  // Sun Woo Young Nyeu
+                mBuilder.inserted());
     }
 
     public void testMultiwordName() {

@@ -16,12 +16,14 @@
 
 package com.android.providers.contacts;
 
+import android.app.ActivityManagerNative;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.os.RemoteException;
 import android.util.Log;
 
 /**
@@ -57,15 +59,24 @@ public class ContactsUpgradeReceiver extends BroadcastReceiver {
                 // is attempted to be conservative. If the upgrade fails for some reason and we
                 // crash and burn we don't want to get into a loop doing so.
                 prefs.edit().putInt(
-                    PREF_DB_VERSION, ContactsDatabaseHelper.DATABASE_VERSION).apply();
+                    PREF_DB_VERSION, ContactsDatabaseHelper.DATABASE_VERSION).commit();
 
                 // Ask for a reference to the database to force the helper to either
                 // create the database or open it up, performing any necessary upgrades
                 // in the process.
-                Log.i(TAG, "Creating or opening contacts database");
                 ContactsDatabaseHelper helper = ContactsDatabaseHelper.getInstance(context);
-                helper.getWritableDatabase();
-                helper.close();
+                if (context.getDatabasePath(helper.getDatabaseName()).exists()) {
+                    Log.i(TAG, "Creating or opening contacts database");
+                    try {
+                        ActivityManagerNative.getDefault().showBootMessage(
+                                context.getText(R.string.upgrade_msg), true);
+                    } catch (RemoteException e) {
+                    }
+                    helper.getWritableDatabase();
+                }
+
+                ProfileDatabaseHelper profileHelper = ProfileDatabaseHelper.getInstance(context);
+                profileHelper.getWritableDatabase();
 
                 // Log the total time taken for the receiver to perform the operation
                 EventLogTags.writeContactsUpgradeReceiver(System.currentTimeMillis() - startTime);
